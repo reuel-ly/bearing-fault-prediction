@@ -20,6 +20,7 @@ from src.config import ART_DIR, MODELS_DIR, N_LOADS, PAT
 from src.features import extract
 from src.models import CNN1D, CNN2D, to_logspec
 from src.preprocess import filt, load_records, load_round, signature, window
+from src.preprocess import main as build_artifacts
 
 # ---------------- config ----------------
 MODEL_KINDS = ["1D-CNN", "2D-CNN", "Random Forest"]
@@ -29,6 +30,13 @@ st.set_page_config(page_title="Bearing fault monitor", layout="wide")
 
 
 # ---------------- loading helpers ----------------
+@st.cache_resource(show_spinner="Building artifacts from data/ (first run only, ~10 s)...")
+def ensure_artifacts():
+    """artifacts/ is git-ignored, so a fresh clone or deployment builds it on first use."""
+    if not all((ART_DIR / f"data_test{k}.npz").exists() for k in range(N_LOADS)):
+        build_artifacts()
+
+
 @st.cache_data
 def cached_round(k: int):
     return load_round(k)
@@ -108,7 +116,7 @@ def dataset_tab(data, meta, classes):
     })
     c1, c2 = st.columns([2, 1])
     c1.bar_chart(counts)
-    c2.dataframe(counts, use_container_width=True)
+    c2.dataframe(counts, width="stretch")
 
     st.subheader("Per-class signal statistics (training windows)")
     st.caption("Values are in normalized units (after the shared mean/std scaling).")
@@ -163,11 +171,11 @@ def dataset_tab(data, meta, classes):
         ])
         st.markdown("**Records per class and load**")
         st.dataframe(df.pivot_table(index="label", columns="load", values="samples",
-                                    aggfunc="count", fill_value=0), use_container_width=True)
+                                    aggfunc="count", fill_value=0), width="stretch")
         st.markdown("**Mean RMS and kurtosis per class (raw acceleration units)**")
-        st.dataframe(df.groupby("label")[["rms", "kurtosis"]].mean(), use_container_width=True)
+        st.dataframe(df.groupby("label")[["rms", "kurtosis"]].mean(), width="stretch")
         with st.expander("All records"):
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
 
 
 # ---------------- tab 2: live prediction ----------------
@@ -250,10 +258,10 @@ def live_tab(data, meta, classes, kind, k):
         st.session_state.playing = False
 
     b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 2])
-    b1.button("▶ Play", on_click=play, use_container_width=True)
-    b2.button("⏸ Pause", on_click=pause, use_container_width=True)
-    b3.button("◀ Prev", on_click=step, args=(-1,), use_container_width=True)
-    b4.button("Next ▶", on_click=step, args=(1,), use_container_width=True)
+    b1.button("▶ Play", on_click=play, width="stretch")
+    b2.button("⏸ Pause", on_click=pause, width="stretch")
+    b3.button("◀ Prev", on_click=step, args=(-1,), width="stretch")
+    b4.button("Next ▶", on_click=step, args=(1,), width="stretch")
     b5.number_input("Go to window", 0, n_stream - 1, key="jump_to", on_change=jump)
 
     alert_ph, progress_ph = st.empty(), st.empty()
@@ -314,7 +322,7 @@ def live_tab(data, meta, classes, kind, k):
         if truth is not None:
             acc_ph.metric(f"Running accuracy ({len(hist)} windows)", f"{correct / len(hist):.1%}")
         table_ph.dataframe(pd.DataFrame(hist).tail(12).iloc[::-1], hide_index=True,
-                           use_container_width=True)
+                           width="stretch")
         time.sleep(delay)
 
     st.session_state.playing = False                  # reached the end: stop on the last window
@@ -329,10 +337,7 @@ with st.sidebar:
     k = st.selectbox("Round (held-out test load)", list(range(N_LOADS)))
     kind = st.selectbox("Model", MODEL_KINDS)
 
-if not (ART_DIR / f"data_test{k}.npz").exists():
-    st.error(f"`artifacts/data_test{k}.npz` not found. Run `python -m src.preprocess` first.")
-    st.stop()
-
+ensure_artifacts()
 data, meta = cached_round(k)
 classes = np.array(meta["le"].classes_)
 
