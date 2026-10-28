@@ -121,7 +121,7 @@ bearing-fault-prediction/
 │       ├── cnn1d.py           # 1D-CNN over raw waveforms
 │       ├── cnn2d.py           # 2D-CNN over log-spectrograms
 │       └── randomforest.py    # Random Forest over engineered features
-├── artifacts/                 # generated: windowed/normalized splits + prep metadata
+├── artifacts/                 # generated, git-ignored: windowed/normalized splits + prep metadata
 ├── models/                    # generated: trained checkpoints + test predictions per round
 ├── requirements.txt
 ├── LICENSE                    # Apache-2.0
@@ -140,7 +140,9 @@ pip install -r requirements.txt
 ```
 
 Developed and verified with **Python 3.13.5**; `requirements.txt` pins the direct dependencies
-(`numpy`, `scipy`, `scikit-learn`, `torch` (CPU build), `joblib`, `pandas`, `streamlit`).
+(`numpy`, `scipy`, `scikit-learn`, `torch` (CPU build, from PyTorch's CPU package index),
+`joblib`, `pandas`, `streamlit`). For GPU training, install a CUDA build of `torch==2.14.1`
+instead.
 
 A GPU is used automatically when available — the CNN training loop selects `cuda` if
 `torch.cuda.is_available()`, otherwise `cpu`. On CPU, training all three models takes ~6 minutes.
@@ -186,7 +188,24 @@ streamlit run src/app.py
 Pick a round and model in the sidebar. The *Dataset statistics* tab shows class counts, per-class
 RMS/kurtosis and spectra; the *Live prediction* tab streams held-out test windows (or an uploaded
 CWRU `.mat` file) through the model window by window. The app refuses to load a checkpoint whose
-saved preprocessing settings differ from the current artifacts.
+saved preprocessing settings differ from the current artifacts. If `artifacts/` is missing (it is
+git-ignored), the app builds it from `data/` on first start (~10 s).
+
+### 4. Deploy to Streamlit Community Cloud
+
+The repository deploys as-is: the trained checkpoints in `models/` are committed, and the app
+builds `artifacts/` itself on first start.
+
+1. Push the repository to GitHub.
+2. On [share.streamlit.io](https://share.streamlit.io), create an app from the repository with
+   branch `main` and main file path **`src/app.py`**.
+3. Under *Advanced settings*, choose **Python 3.13** — the pickled Random Forest checkpoints and
+   pinned library versions were produced with it.
+
+`requirements.txt` installs the **CPU-only** PyTorch build through PyTorch's extra package index;
+the default Linux wheel would pull several GB of CUDA libraries the app does not use. No secrets
+are required. The first visit after each deploy or reboot waits for the artifact build; cloning
+also downloads the ~480 MB dataset, so deploys take a few minutes.
 
 ---
 
