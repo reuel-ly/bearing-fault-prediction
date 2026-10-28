@@ -1,7 +1,9 @@
+# CPU-only torch: the default PyPI wheel on Linux pulls several GB of CUDA libraries
+--extra-index-url https://download.pytorch.org/whl/cpu
 joblib==1.6.0
 numpy==2.5.4
 pandas==3.1.0
 scikit-learn==1.9.1
 scipy==1.18.1
 streamlit==1.66.1
-torch==2.14.1
+torch==2.14.1+cpu
