@@ -12,34 +12,72 @@ selection.
 
 ## Results
 
-Mean ± sample standard deviation over the 4 leave-one-load-out rounds, measured on the held-out
-test load of each round (predictions for every round are saved in `models/<model>/pred_test{k}.npz`):
+Every model is trained **5 times per round with different seeds** (4 rounds × 5 seeds = 20 runs
+per model) and scored on the held-out test load of its round. All tables and figures below are
+produced by `python -m src.evaluate` (full tables in [`reports/summary.md`](reports/summary.md)).
 
-| Model | Test accuracy | Test macro-F1 | Weakest class (mean recall) |
-|---|---|---|---|
-| **CNN2D** | **0.9954 ± 0.0063** | **0.9937 ± 0.0089** | `B021` 0.936 |
-| **Random Forest** | 0.9824 ± 0.0161 | 0.9754 ± 0.0237 | `B021` 0.826 |
-| **CNN1D** | 0.9701 ± 0.0345 | 0.9533 ± 0.0545 | `B021` 0.729 |
-
-Per-round test accuracy:
-
-| Round | Test load | CNN1D | CNN2D | Random Forest |
+| Model | Test accuracy | Test macro-F1 | Seed std (mean over rounds) | `B021` recall |
 |---|---|---|---|---|
-| 0 | 0 HP | 0.9410 | 0.9950 | 0.9598 |
-| 1 | 1 HP | 0.9395 | 0.9867 | 0.9879 |
-| 2 | 2 HP | 1.0000 | 1.0000 | 0.9976 |
-| 3 | 3 HP | 1.0000 | 1.0000 | 0.9843 |
+| **2D-CNN** | **0.9850 ± 0.0130** | 0.9758 ± 0.0228 | 0.0145 | 0.80 |
+| **Random Forest** | 0.9832 ± 0.0162 | **0.9769 ± 0.0236** | **0.0021** | **0.83** |
+| **1D-CNN** | 0.9652 ± 0.0165 | 0.9489 ± 0.0281 | 0.0312 | 0.72 |
 
-`B021` (ball defect, 0.021″) is the hardest class for every model. It has as many records as
-every other non-outer-race class (one per load), so this is not a sample-size effect; ball
-faults at 0.021″ are a known hard case in CWRU.
+Accuracy and macro-F1 are the mean over all 20 runs; **±** is the standard deviation across the
+4 rounds (how much the test load matters). *Seed std* is the standard deviation across the 5 seeds
+of a round, averaged over rounds (how much training randomness matters).
+
+Per-round test accuracy (mean ± std over 5 seeds):
+
+| Round | Test load | 1D-CNN | 2D-CNN | Random Forest |
+|---|---|---|---|---|
+| 0 | 0 HP | 0.9548 ± 0.0278 | 0.9912 ± 0.0039 | 0.9598 ± 0.0024 |
+| 1 | 1 HP | 0.9501 ± 0.0194 | 0.9775 ± 0.0193 | 0.9874 ± 0.0022 |
+| 2 | 2 HP | 0.9867 ± 0.0168 | 1.0000 ± 0.0000 | 0.9973 ± 0.0013 |
+| 3 | 3 HP | 0.9693 ± 0.0608 | 0.9712 ± 0.0348 | 0.9884 ± 0.0024 |
+
+**The 2D-CNN and the Random Forest are statistically tied.** Their means differ by 0.002, far less
+than the round-to-round spread. The Random Forest is far more *reliable*: its result barely changes
+with the seed, whereas a single CNN run can land several points above or below its mean (1D-CNN
+round 3 ranges over ±0.06). The 1D-CNN is clearly the weakest.
+
+### Confusion matrices
+
+![Row-normalized test confusion matrices](reports/confusion_normalized.png)
+
+Pooled over all 20 runs per model; each row shows where the windows of one true class ended up
+(raw counts: [`reports/confusion_counts.png`](reports/confusion_counts.png)). Almost all errors are
+**among the three ball-fault sizes**: `B021` is mistaken for `B007` (1D-CNN 22 %, Random Forest
+8 %) or `B014` (2D-CNN 10 %). Inner-race, outer-race and `Normal` windows are classified almost
+perfectly; `Normal` is never confused with a fault in either direction by the 2D-CNN or Random
+Forest. In other words, the models reliably detect *that* a ball is damaged but struggle with
+*how badly*. `B021` has as many records as every other non-outer-race class (one per load), so
+this is not a sample-size effect; ball faults at 0.021″ are a known hard case in CWRU.
+
+### Overfitting check
+
+![1D-CNN learning curves](reports/learning_curves_cnn1d.png)
+![2D-CNN learning curves](reports/learning_curves_cnn2d.png)
+
+Training loss keeps falling to ~10⁻³ while validation loss levels off around 10⁻¹ (except
+2D-CNN round 1), and training accuracy reaches 100 % within 2–3 epochs. So both CNNs **fit the
+training loads almost perfectly and pay a generalization gap on a new load**, but validation loss
+does not climb back up. They stop improving rather than actively overfitting, and early stopping
+on validation F1 keeps the best epoch. The 1D-CNN's round-2 validation curve has a very wide band:
+some seeds generalize to the new load and others do not, which is the instability seen in its
+seed std.
+
+For the Random Forest, training accuracy is 1.000 in every round, out-of-bag accuracy 0.997–0.999,
+validation 0.979–0.998 and test 0.960–0.997. Out-of-bag windows come from the training loads (and
+overlap their neighbours), so the meaningful gap is OOB → test: about 1–4 points, again the cost
+of an unseen load rather than memorization of individual windows. Per-round gap tables for all
+models are in [`reports/summary.md`](reports/summary.md).
 
 ### How to read these numbers
 
 - **Small differences are noise.** Windows cut from the same recording are not independent, and
   each test load contains exactly **one recording per class** (three for `OR007` and `OR021`).
   Per-class recall is effectively measured on a single recording, and 4 rounds give a very wide
-  confidence interval on the mean.
+  confidence interval on the mean. Repeating seeds measures training randomness, not this.
 - **This is not a test on unseen bearings.** In CWRU each fault was seeded into one physical
   bearing that was then run at all four loads. Holding out a load removes the operating condition
   from training, but the test bearing itself was seen; models may partly learn bearing-specific
@@ -47,14 +85,14 @@ faults at 0.021″ are a known hard case in CWRU.
 
 ### Top Random Forest features
 
-Mean impurity-based importance across the 4 rounds:
+Mean impurity-based importance across the 4 rounds and 5 seeds:
 
 ```
-  rms                0.1097      spec_3500-4000Hz 0.0742
-  env_150-200Hz      0.0662      p2p              0.0642
-  spec_0-500Hz       0.0620      spec_500-1000Hz  0.0615
-  peak               0.0597      kurtosis         0.0544
-  spec_1500-2000Hz   0.0504      spec_centroid    0.0459
+  rms                0.1124      spec_3500-4000Hz 0.0723
+  env_150-200Hz      0.0704      p2p              0.0644
+  spec_500-1000Hz    0.0638      spec_0-500Hz     0.0636
+  peak               0.0570      kurtosis         0.0526
+  spec_1500-2000Hz   0.0482      spec_centroid    0.0458
 ```
 
 ---
@@ -116,13 +154,15 @@ bearing-fault-prediction/
 │   ├── models.py              # CNN1D, CNN2D, log-spectrogram transform
 │   ├── features.py            # 30 engineered features for the Random Forest
 │   ├── app.py                 # Streamlit dashboard: dataset statistics + simulated live prediction
+│   ├── evaluate.py            # confusion matrices, learning curves, summary tables -> reports/
 │   └── train/
 │       ├── common.py          # shared CNN training loop, scoring, summary
 │       ├── cnn1d.py           # 1D-CNN over raw waveforms
 │       ├── cnn2d.py           # 2D-CNN over log-spectrograms
 │       └── randomforest.py    # Random Forest over engineered features
 ├── artifacts/                 # generated, git-ignored: windowed/normalized splits + prep metadata
-├── models/                    # generated: trained checkpoints + test predictions per round
+├── models/                    # generated: checkpoints (seed 0), predictions + histories (all seeds)
+├── reports/                   # generated: evaluation figures and summary.md
 ├── requirements.txt
 ├── LICENSE                    # Apache-2.0
 └── README.md
@@ -145,7 +185,8 @@ Developed and verified with **Python 3.13.5**; `requirements.txt` pins the direc
 instead.
 
 A GPU is used automatically when available — the CNN training loop selects `cuda` if
-`torch.cuda.is_available()`, otherwise `cpu`. On CPU, training all three models takes ~6 minutes.
+`torch.cuda.is_available()`, otherwise `cpu`. On CPU, training all three models (5 seeds each) takes ~50 minutes, most of it
+the 2D-CNN.
 
 ---
 
@@ -167,17 +208,20 @@ artifacts/prep_test{0..3}.joblib  # mu, sd, LabelEncoder, load indices, fs, size
 
 ### 2. Train and evaluate
 
-Each script trains all 4 rounds independently and prints mean ± std accuracy / macro-F1 plus
-per-class recall.
+Each script trains all 4 rounds × 5 seeds and prints per-round mean ± std over seeds, the
+overall accuracy / macro-F1 and per-class recall.
 
 ```bash
 python -m src.train.cnn1d          # -> models/cnn1d/
 python -m src.train.cnn2d          # -> models/cnn2d/
 python -m src.train.randomforest   # -> models/rf/
+python -m src.evaluate             # -> reports/  (needs all three models' outputs)
 ```
 
 The training scripts are independent — you can run any subset, but all of them require
 `artifacts/` to exist. Re-run them whenever you rerun preprocessing with different settings.
+Seed 0 of each round is the checkpoint used by the app; seeds 1–4 only save predictions and
+training histories.
 
 ### 3. Dashboard
 
@@ -310,7 +354,8 @@ A `RandomForestClassifier` (`n_estimators=300`, `class_weight="balanced"`, `n_jo
 | Envelope spectrum | 12 | `env_0-50Hz` … `env_550-600Hz` — energy fraction in each 50 Hz band of the Hilbert envelope spectrum, covering the bearing fault frequencies |
 
 Hyperparameters are grid-searched over `max_depth ∈ {None, 20}` × `min_samples_leaf ∈ {1, 5}`
-using validation macro-F1 only; the winning fit is kept and scored on the test load once.
+using validation macro-F1 only; the winning fit is kept and scored on the test load once. Forests
+are fitted with `oob_score=True` so that out-of-bag accuracy can be compared with train and test.
 
 ### Shared training recipe (both CNNs, `src/train/common.py`)
 
@@ -321,7 +366,8 @@ using validation macro-F1 only; the winning fit is kept and scored on the test l
 | LR scheduler | `ReduceLROnPlateau(mode="max", factor=0.5, patience=3)` on validation macro-F1 |
 | Epochs / early stopping | max 60, patience 10 on validation macro-F1 |
 | Batch size | 64 |
-| Seeds | `42 + round_index` (cuDNN determinism is not enforced, so GPU runs may differ slightly) |
+| Seeds | 5 per round: `42 + round_index + 1000 × s`, `s = 0…4` (cuDNN determinism is not enforced, so GPU runs may differ slightly) |
+| Logged per epoch | train loss / accuracy (eval mode), validation loss / accuracy / macro-F1 |
 
 The best-validation `state_dict` is deep-copied and restored before the single test evaluation.
 
@@ -340,6 +386,7 @@ or environment variables.
 | | `LOWPASS` | `4000` |
 | | `USE_BANDPASS`, `BAND` | `False`, `(500, 4000)` |
 | `src/train/common.py` | `EPOCHS`, `PATIENCE` | `60`, `10` |
+| | `N_SEEDS` | `5` |
 | | `BATCH`, `LR`, `WD` | `64`, `1e-3`, `1e-4` |
 | | `DEV` | `cuda` if available else `cpu` |
 | `src/models.py` | `NPERSEG`, `NOVERLAP`, `EPS` | `128`, `96`, `1e-10` |
@@ -359,7 +406,10 @@ or environment variables.
 | `models/cnn1d/model_test{k}.pt` | `{state_dict, prep}` — best-validation CNN1D weights + preprocessing settings |
 | `models/cnn2d/model_test{k}.pt` | `{state_dict, prep, mu2, sd2}` — CNN2D weights, settings, spectrogram normalization |
 | `models/rf/model_test{k}.joblib` | `{model, prep}` — fitted `RandomForestClassifier` + preprocessing settings |
-| `models/<model>/pred_test{k}.npz` | `y_true`, `y_pred` for the test split |
+| `models/<model>/pred_test{k}_seed{s}.npz` | `y_true`, `y_pred` for the test split, every seed |
+| `models/{cnn1d,cnn2d}/history_test{k}_seed{s}.json` | Per-epoch train/validation loss and accuracy, best validation F1, test scores |
+| `models/rf/history_test{k}_seed{s}.json` | Chosen hyperparameters, train / out-of-bag / validation / test accuracy |
+| `reports/` | `confusion_normalized.png`, `confusion_counts.png`, `learning_curves_{cnn1d,cnn2d}.png`, `summary.md` |
 
 ---
 
