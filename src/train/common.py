@@ -1,5 +1,6 @@
 """Training loop, scoring and reporting shared by the three model scripts."""
 import copy
+import json
 import random
 
 import numpy as np
@@ -9,14 +10,21 @@ from sklearn.metrics import accuracy_score, f1_score, recall_score
 from sklearn.utils.class_weight import compute_class_weight
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.config import SEED
+
 EPOCHS, PATIENCE = 60, 10
 BATCH, LR, WD = 64, 1e-3, 1e-4
+N_SEEDS = 5               # seed s=0 reproduces the original single-seed run and is the one checkpointed
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def seed_all(s):
     random.seed(s); np.random.seed(s); torch.manual_seed(s)
     torch.cuda.manual_seed_all(s)
+
+
+def run_seed(k, s):
+    return SEED + k + 1000 * s
 
 
 # ---------------- CNN helpers ----------------
@@ -32,16 +40,30 @@ def predict(model, dl):
     return torch.cat([model(x.to(DEV)).argmax(1).cpu() for x, _ in dl]).numpy()
 
 
+@torch.no_grad()
+def evaluate(model, dl, loss_fn):
+    """Eval-mode mean loss and predictions over a loader."""
+    model.eval()
+    total, preds = 0.0, []
+    for x, y in dl:
+        out = model(x.to(DEV))
+        total += loss_fn(out, y.to(DEV)).item() * len(y)
+        preds.append(out.argmax(1).cpu())
+    return total / len(dl.dataset), torch.cat(preds).numpy()
+
+
 def train_cnn(model, Xtr, ytr, Xva, yva, n_classes, tag):
-    """Train with early stopping on validation macro-F1; returns (best state_dict, best F1)."""
+    """Train with early stopping on validation macro-F1.
+    Returns (best state_dict, best F1, per-epoch history)."""
     cw = compute_class_weight("balanced", classes=np.arange(n_classes), y=ytr)
     loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(cw, dtype=torch.float32, device=DEV))
     model = model.to(DEV)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", factor=0.5, patience=3)
     dl_tr, dl_va = loader(Xtr, ytr, True), loader(Xva, yva, False)
+    dl_tr_eval = loader(Xtr, ytr, False)               # train metrics in eval mode, like validation
 
-    best_f1, best_state, bad = -1.0, None, 0
+    best_f1, best_state, bad, hist = -1.0, None, 0, []
     for ep in range(EPOCHS):
         model.train()
         for x, y in dl_tr:
@@ -50,16 +72,25 @@ def train_cnn(model, Xtr, ytr, Xva, yva, n_classes, tag):
             loss_fn(model(x), y).backward()
             opt.step()
 
-        val_f1 = f1_score(yva, predict(model, dl_va), average="macro")
+        tr_loss, tr_pred = evaluate(model, dl_tr_eval, loss_fn)
+        va_loss, va_pred = evaluate(model, dl_va, loss_fn)
+        val_f1 = f1_score(yva, va_pred, average="macro")
+        hist.append(dict(epoch=ep, train_loss=tr_loss, train_acc=accuracy_score(ytr, tr_pred),
+                         val_loss=va_loss, val_acc=accuracy_score(yva, va_pred), val_f1=val_f1))
         sched.step(val_f1)
-        print(f"  {tag} ep {ep:02d} val macro-F1 {val_f1:.4f}")
+        print(f"  {tag} ep {ep:02d} train loss {tr_loss:.4f} | val loss {va_loss:.4f} "
+              f"| val macro-F1 {val_f1:.4f}")
         if val_f1 > best_f1:
             best_f1, best_state, bad = val_f1, copy.deepcopy(model.state_dict()), 0
         else:
             bad += 1
             if bad >= PATIENCE:
                 break
-    return best_state, best_f1
+    return best_state, best_f1, hist
+
+
+def save_history(path, **record):
+    path.write_text(json.dumps(record, indent=1))
 
 
 # ---------------- scoring ----------------
@@ -72,10 +103,16 @@ def score(y_true, y_pred, n_classes):
 
 
 def summarize(results, classes):
-    """Mean ± sample std (ddof=1) over rounds, then mean per-class recall."""
-    accs = np.array([r["acc"] for r in results])
-    f1s = np.array([r["f1"] for r in results])
-    print(f"\nAccuracy : {accs.mean():.4f} ± {accs.std(ddof=1):.4f}")
-    print(f"Macro-F1 : {f1s.mean():.4f} ± {f1s.std(ddof=1):.4f}")
-    for name, rec in zip(classes, np.mean([r["recall"] for r in results], axis=0)):
+    """results[k][s] = score dict. Per round: mean ± std over seeds; overall: mean over all
+    runs, ± std over rounds of the seed-averaged scores (how much the test load matters)."""
+    acc = np.array([[r["acc"] for r in rk] for rk in results])     # (rounds, seeds)
+    f1 = np.array([[r["f1"] for r in rk] for rk in results])
+    print()
+    for k in range(len(results)):
+        print(f"round {k}: acc {acc[k].mean():.4f} ± {acc[k].std(ddof=1):.4f} | "
+              f"macro-F1 {f1[k].mean():.4f} ± {f1[k].std(ddof=1):.4f}  (over {acc.shape[1]} seeds)")
+    print(f"\nAccuracy : {acc.mean():.4f} ± {acc.mean(1).std(ddof=1):.4f}  (± over rounds)")
+    print(f"Macro-F1 : {f1.mean():.4f} ± {f1.mean(1).std(ddof=1):.4f}  (± over rounds)")
+    recall = np.mean([r["recall"] for rk in results for r in rk], axis=0)
+    for name, rec in zip(classes, recall):
         print(f"  {name:6s} recall {rec:.4f}")
