@@ -58,10 +58,18 @@ def pm(x):
 
 
 # ---------------- confusion matrices ----------------
-def plot_confusion(cms, names, normalized):
-    fig, axes = plt.subplots(1, len(cms), figsize=(6.2 * len(cms), 6.6))
-    fig.subplots_adjust(left=0.05, right=0.92, top=0.86, bottom=0.17, wspace=0.28)
-    for ax, (title, cm) in zip(axes, cms.items()):
+def plot_confusion(cms, names, normalized, path):
+    """All models side by side, or one model per figure when `cms` holds a single entry."""
+    single = len(cms) == 1
+    if single:
+        fig, axes = plt.subplots(1, 1, figsize=(7.6, 7.2), squeeze=False)
+        fig.subplots_adjust(left=0.13, right=0.86, top=0.85, bottom=0.15)
+        cax = fig.add_axes([0.89, 0.25, 0.018, 0.5])
+    else:
+        fig, axes = plt.subplots(1, len(cms), figsize=(6.2 * len(cms), 6.6), squeeze=False)
+        fig.subplots_adjust(left=0.05, right=0.92, top=0.86, bottom=0.17, wspace=0.28)
+        cax = fig.add_axes([0.935, 0.25, 0.01, 0.55])
+    for ax, (title, cm) in zip(axes[0], cms.items()):
         M = 100 * cm / cm.sum(1, keepdims=True) if normalized else cm.astype(float)
         vmax = 100 if normalized else M.max()
         img = ax.imshow(np.ma.masked_equal(M, 0), cmap=CMAP,
@@ -74,7 +82,8 @@ def plot_confusion(cms, names, normalized):
                 txt = f"{int(v)}"
             ax.text(j, i, txt, ha="center", va="center", fontsize=8,
                     color="white" if img.norm(v) > 0.55 else INK)
-        ax.set_title(title, loc="left")
+        if not single:
+            ax.set_title(title, loc="left")
         ax.set_xticks(range(len(names)), names, rotation=45, ha="right")
         ax.set_yticks(range(len(names)), names)
         ax.set_xlabel("Predicted class")
@@ -83,11 +92,16 @@ def plot_confusion(cms, names, normalized):
         for sp in ax.spines.values():
             sp.set_visible(False)
     unit = "% of true-class windows (rows sum to 100)" if normalized else "window count"
-    fig.suptitle(f"Test confusion matrices, pooled over 4 rounds × {N_SEEDS} seeds - {unit}",
-                 x=0.01, y=0.98, ha="left", fontsize=12, fontweight="bold")
-    fig.colorbar(img, cax=fig.add_axes([0.935, 0.25, 0.01, 0.55])).outline.set_visible(False)
-    name = "confusion_normalized.png" if normalized else "confusion_counts.png"
-    fig.savefig(REPORTS / name, dpi=150)
+    if single:
+        fig.suptitle(f"{title} - test confusion matrix", x=0.03, y=0.97, ha="left",
+                     fontsize=13, fontweight="bold")
+        fig.text(0.03, 0.915, f"Pooled over {N_LOADS} rounds × {N_SEEDS} seeds · {unit}",
+                 ha="left", color=INK2)
+    else:
+        fig.suptitle(f"Test confusion matrices, pooled over {N_LOADS} rounds × {N_SEEDS} seeds - {unit}",
+                     x=0.01, y=0.98, ha="left", fontsize=12, fontweight="bold")
+    fig.colorbar(img, cax=cax).outline.set_visible(False)
+    fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
@@ -195,8 +209,10 @@ def main():
     for m, sub in MODELS.items():
         y, p = preds(sub)
         cms[m] = confusion_matrix(y, p, labels=np.arange(len(names)))
-    plot_confusion(cms, names, normalized=True)
-    plot_confusion(cms, names, normalized=False)
+    for normalized, kind in [(True, "normalized"), (False, "counts")]:
+        plot_confusion(cms, names, normalized, REPORTS / f"confusion_{kind}.png")
+        for m, sub in MODELS.items():                  # one figure per model, for slides
+            plot_confusion({m: cms[m]}, names, normalized, REPORTS / f"confusion_{kind}_{sub}.png")
 
     hs = {m: histories(sub) for m, sub in MODELS.items()}
     for m in CNNS:
