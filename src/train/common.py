@@ -14,7 +14,10 @@ from src.config import SEED
 
 EPOCHS, PATIENCE = 60, 10
 BATCH, LR, WD = 64, 1e-3, 1e-4
-N_SEEDS = 5               # seed s=0 reproduces the original single-seed run and is the one checkpointed
+# Seed s=0 is the one checkpointed for the app. It uses the original single-run seed, but the CNN
+# runs differ from the original: every DataLoader pass draws from torch's global RNG, so the extra
+# per-epoch train-set evaluation shifts the shuffle order. The random forest reproduces exactly.
+N_SEEDS = 5
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 
