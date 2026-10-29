@@ -99,14 +99,16 @@ Mean impurity-based importance across the 4 rounds and 5 seeds:
 
 ## Dataset
 
-The **CWRU Bearing Data Center** dataset (133 `.mat` files, ~480 MB) is vendored in `data/`.
+The subset of the **CWRU Bearing Data Center** dataset that the code uses (56 `.mat` files,
+~180 MB) is vendored in `data/`.
 
-| Directory | Files | Content | Used by the code |
-|---|---|---|---|
-| `data/12k_DE` | 60 | 12 kHz **drive-end** vibration, all fault types | **Yes** |
-| `data/Normal` | 4 | Healthy baseline, 48 kHz (decimated to 12 kHz on load) | **Yes** |
-| `data/12k_FE` | 45 | 12 kHz **fan-end** vibration | No — available but unused |
-| `data/48k_DE` | 24 | 48 kHz drive-end vibration | No — available but unused |
+| Directory | Files | Content |
+|---|---|---|
+| `data/12k_DE` | 52 | 12 kHz **drive-end** vibration, all fault types |
+| `data/Normal` | 4 | Healthy baseline, 48 kHz (decimated to 12 kHz on load) |
+
+The fan-end (`12k_FE`), 48 kHz drive-end (`48k_DE`) and `028` fault-diameter files were removed
+to keep the repository small; they are available from the CWRU Bearing Data Center.
 
 ### Filename convention
 
@@ -131,8 +133,9 @@ that integer labels are consistent across all rounds:
 
 ### Notes on the data
 
-- The `028` fault diameter (8 files) is **skipped** by `load_records()`: the dataset has no
-  `OR028` counterpart, so including it would break class consistency.
+- The `028` fault diameter is excluded (and its files are not vendored): the dataset has no
+  `OR028` counterpart, so including it would break class consistency. `load_records()` still
+  skips `028` files if they are added back.
 - Records per class: one per load (4 in total) for every class except `OR007` and `OR021`, which
   have three clock positions per load (12 in total) and therefore ~3× as many windows. All
   models compensate with balanced class weights.
@@ -147,7 +150,7 @@ that integer labels are consistent across all rounds:
 
 ```
 bearing-fault-prediction/
-├── data/                      # CWRU dataset (133 .mat files)
+├── data/                      # CWRU dataset subset (56 .mat files)
 ├── src/
 │   ├── config.py              # paths, sampling rate, window size, filter settings
 │   ├── preprocess.py          # load → filter → window → split → normalize → save artifacts
@@ -249,7 +252,7 @@ builds `artifacts/` itself on first start.
 `requirements.txt` installs the **CPU-only** PyTorch build through PyTorch's extra package index;
 the default Linux wheel would pull several GB of CUDA libraries the app does not use. No secrets
 are required. The first visit after each deploy or reboot waits for the artifact build; cloning
-also downloads the ~480 MB dataset, so deploys take a few minutes.
+also downloads the dataset, so deploys take a few minutes.
 
 ---
 
